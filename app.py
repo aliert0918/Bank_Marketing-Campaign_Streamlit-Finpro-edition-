@@ -1,159 +1,220 @@
-import streamlit.components.v1 as components
 import streamlit as st
 import pandas as pd
 import pickle
 import shap
 import matplotlib.pyplot as plt
-import numpy as np
-from imblearn.pipeline import Pipeline # Important for loading the pickle
 
 # ==========================================
-# 1. LOAD MODEL & HELPERS
+# 1. CONFIGURATION & LOAD DATA
 # ==========================================
-st.set_page_config(page_title="Bank Marketing Predictor", layout="wide")
+st.set_page_config(page_title="Bank Marketing Prediction", layout="wide")
 
 MODEL_FILE = 'threshold_tuned_BankMarketingFinpro_FOR_DEPLOYMENT_20260215_11_49.pkl'
 
+# Manual definition of valid values based on provided source files [cite: 2, 3]
+CATEGORICAL_OPTIONS = {
+    'job': ['housemaid', 'services', 'admin.', 'blue-collar', 'technician', 'retired', 'management', 'unemployed', 'self-employed', 'unknown', 'entrepreneur', 'student'],
+    'marital': ['married', 'single', 'divorced', 'unknown'],
+    'education': ['basic.4y', 'high.school', 'basic.6y', 'basic.9y', 'professional.course', 'unknown', 'university.degree', 'illiterate'],
+    'default': ['no', 'unknown', 'yes'],
+    'housing': ['no', 'yes', 'unknown'],
+    'loan': ['no', 'yes', 'unknown'],
+    'contact': ['telephone', 'cellular'],
+    'month': ['may', 'jun', 'jul', 'aug', 'oct', 'nov', 'dec', 'mar', 'apr', 'sep'],
+    'day_of_week': ['mon', 'tue', 'wed', 'thu', 'fri'],
+    'poutcome': ['nonexistent', 'failure', 'success']
+}
+
+NUMERICAL_RANGES = {
+    'age': (17, 98, 38),
+    'campaign': (1, 56, 2),
+    'pdays': (0, 999, 999),
+    'previous': (0, 7, 0),
+    'emp.var.rate': (-3.4, 1.4, 1.1),
+    'cons.price.idx': (92.2, 94.7, 93.7),
+    'cons.conf.idx': (-50.8, -26.9, -41.8),
+    'euribor3m': (0.6, 5.05, 4.8),
+    'nr.employed': (4963, 5228, 5191)
+}
+
+# Features not found in range files but present in column_names.txt 
+# Assuming these are binary/engineered features that need manual input
+EXTRA_FEATURES = ['contacted_before', 'previous_success', 'is_success_month', 'euribor_low']
+
 @st.cache_resource
 def load_model():
-    with open(MODEL_FILE, 'rb') as file:
-        return pickle.load(file)
+    try:
+        with open(MODEL_FILE, 'rb') as file:
+            model = pickle.load(file)
+        return model
+    except FileNotFoundError:
+        st.error(f"Model file not found. Please ensure `{MODEL_FILE}` is in the same directory.")
+        return None
 
-# We load the 'wrapper' (TunedThresholdClassifierCV)
-model_wrapper = load_model()
-
-# Function to automate feature engineering (so the user doesn't have to)
-def apply_feature_engineering(df):
-    df = df.copy()
-    df["contacted_before"] = (df["pdays"] != 999).astype(int)
-    df["previous_success"] = (df["poutcome"] == "success").astype(int)
-    success_months = ["mar", "dec", "sep", "oct"]
-    df["is_success_month"] = df["month"].isin(success_months).astype(int)
-    df["euribor_low"] = (df["euribor3m"] <= 1.5).astype(int)
-    return df
+model = load_model()
 
 # ==========================================
-# 2. UI LAYOUT (Grouped Inputs)
+# 2. UI LAYOUT & INPUTS
 # ==========================================
 st.title("🏦 Bank Marketing Subscription Predictor")
+st.markdown("Enter client details below to predict the likelihood of subscribing to a term deposit.")
 
+# Form for user input
 with st.form("prediction_form"):
-    # Group 1: Client Profile
+    
+    # --- Group 1: Client Profile ---
     st.subheader("👤 Client Profile")
     c1, c2, c3 = st.columns(3)
     with c1:
-        age = st.number_input("Age", 17, 98, 30)
-        job = st.selectbox("Job", ['housemaid', 'services', 'admin.', 'blue-collar', 'technician', 'retired', 'management', 'unemployed', 'self-employed', 'unknown', 'entrepreneur', 'student'])
+        age = st.number_input("Age", min_value=NUMERICAL_RANGES['age'][0], max_value=NUMERICAL_RANGES['age'][1], value=NUMERICAL_RANGES['age'][2])
+        job = st.selectbox("Job", CATEGORICAL_OPTIONS['job'])
+        marital = st.selectbox("Marital Status", CATEGORICAL_OPTIONS['marital'])
     with c2:
-        marital = st.selectbox("Marital", ['married', 'single', 'divorced', 'unknown'])
-        education = st.selectbox("Education", ['basic.4y', 'high.school', 'basic.6y', 'basic.9y', 'professional.course', 'unknown', 'university.degree', 'illiterate'])
+        education = st.selectbox("Education", CATEGORICAL_OPTIONS['education'])
+        default = st.selectbox("Has Credit in Default?", CATEGORICAL_OPTIONS['default'])
     with c3:
-        default = st.selectbox("Default?", ['no', 'unknown', 'yes'])
-        housing = st.selectbox("Housing Loan?", ['no', 'yes', 'unknown'])
-        loan = st.selectbox("Personal Loan?", ['no', 'yes', 'unknown'])
+        housing = st.selectbox("Has Housing Loan?", CATEGORICAL_OPTIONS['housing'])
+        loan = st.selectbox("Has Personal Loan?", CATEGORICAL_OPTIONS['loan'])
 
-    st.divider()
+    st.markdown("---")
 
-    # Group 2: Campaign Data
-    st.subheader("📞 Campaign Details")
+    # --- Group 2: Campaign & Contact Info ---
+    st.subheader("📞 Current Campaign & Contact")
     c4, c5, c6 = st.columns(3)
     with c4:
-        contact = st.selectbox("Contact Type", ['telephone', 'cellular'])
-        month = st.selectbox("Month", ['may', 'jun', 'jul', 'aug', 'oct', 'nov', 'dec', 'mar', 'apr', 'sep'])
+        contact = st.selectbox("Contact Communication Type", CATEGORICAL_OPTIONS['contact'])
+        month = st.selectbox("Last Contact Month", CATEGORICAL_OPTIONS['month'])
     with c5:
-        day_of_week = st.selectbox("Day of Week", ['mon', 'tue', 'wed', 'thu', 'fri'])
-        campaign = st.number_input("Contacts in this campaign", 1, 50, 1)
+        day_of_week = st.selectbox("Last Contact Day", CATEGORICAL_OPTIONS['day_of_week'])
+        campaign = st.number_input("Contacts during this campaign", min_value=1, max_value=60, value=2)
     with c6:
-        pdays = st.number_input("Days since last contact (999=Never)", 0, 999, 999)
-        previous = st.number_input("Previous contacts", 0, 10, 0)
-        poutcome = st.selectbox("Previous Outcome", ['nonexistent', 'failure', 'success'])
+        # Extra feature assumption: is_success_month
+        is_success_month = st.selectbox("Is Historic Success Month?", [0, 1], help="Derived feature: Is this month historically successful?")
 
-    st.divider()
+    st.markdown("---")
 
-    # Group 3: Economic Indicators
-    st.subheader("📊 Socio-Economic Indicators")
+    # --- Group 3: History & Socio-Economics ---
+    st.subheader("📊 History & Socio-Economic Indicators")
     c7, c8, c9 = st.columns(3)
     with c7:
-        emp_var_rate = st.number_input("Emp. Var. Rate", -4.0, 2.0, 1.1)
-        cons_price_idx = st.number_input("Cons. Price Index", 90.0, 95.0, 93.9)
+        pdays = st.number_input("Days since last contact (999=Never)", min_value=0, max_value=999, value=999)
+        previous = st.number_input("Number of contacts before this campaign", min_value=0, max_value=10, value=0)
+        poutcome = st.selectbox("Outcome of previous campaign", CATEGORICAL_OPTIONS['poutcome'])
+        # Extra features
+        contacted_before = st.selectbox("Contacted Before?", [0, 1])
+        previous_success = st.selectbox("Previous Success?", [0, 1])
+        
     with c8:
-        cons_conf_idx = st.number_input("Cons. Conf. Index", -50.0, -10.0, -36.4)
-        euribor3m = st.number_input("Euribor 3M", 0.0, 6.0, 4.8)
+        emp_var_rate = st.number_input("Employment Variation Rate", value=NUMERICAL_RANGES['emp.var.rate'][2])
+        cons_price_idx = st.number_input("Consumer Price Index", value=NUMERICAL_RANGES['cons.price.idx'][2])
+        cons_conf_idx = st.number_input("Consumer Confidence Index", value=NUMERICAL_RANGES['cons.conf.idx'][2])
+        
     with c9:
-        nr_employed = st.number_input("No. Employed", 4900.0, 5300.0, 5228.0)
+        euribor3m = st.number_input("Euribor 3 Month Rate", value=NUMERICAL_RANGES['euribor3m'][2])
+        nr_employed = st.number_input("Number of Employees", value=NUMERICAL_RANGES['nr.employed'][2])
+        # Extra feature
+        euribor_low = st.selectbox("Is Euribor Low?", [0, 1], help="Derived feature: Is the rate historically low?")
 
-    predict_btn = st.form_submit_button("Predict & Explain")
+    submit_button = st.form_submit_button("Predict Subscription")
 
 # ==========================================
-# 3. PREDICTION & SHAP FIX
+# 3. PREDICTION LOGIC
 # ==========================================
-if predict_btn:
-    # 1. Prepare Base DataFrame
-    raw_input = pd.DataFrame([{
-        'age': age, 'job': job, 'marital': marital, 'education': education,
-        'default': default, 'housing': housing, 'loan': loan, 'contact': contact,
-        'month': month, 'day_of_week': day_of_week, 'campaign': campaign,
-        'pdays': pdays, 'previous': previous, 'poutcome': poutcome,
-        'emp.var.rate': emp_var_rate, 'cons.price.idx': cons_price_idx,
-        'cons.conf.idx': cons_conf_idx, 'euribor3m': euribor3m, 'nr.employed': nr_employed
-    }])
+if submit_button and model is not None:
+    # 1. Prepare Data Dictionary mapping inputs to column_names.txt 
+    input_data = {
+        'age': age,
+        'job': job,
+        'marital': marital,
+        'education': education,
+        'default': default,
+        'housing': housing,
+        'loan': loan,
+        'contact': contact,
+        'month': month,
+        'day_of_week': day_of_week,
+        'campaign': campaign,
+        'pdays': pdays,
+        'previous': previous,
+        'poutcome': poutcome,
+        'emp.var.rate': emp_var_rate,
+        'cons.price.idx': cons_price_idx,
+        'cons.conf.idx': cons_conf_idx,
+        'euribor3m': euribor3m,
+        'nr.employed': nr_employed,
+        # Derived features must be passed as they are in the column list
+        'contacted_before': contacted_before,
+        'previous_success': previous_success,
+        'is_success_month': is_success_month,
+        'euribor_low': euribor_low
+    }
 
-    # 2. Auto-Engineer the 4 extra features
-    final_input_df = apply_feature_engineering(raw_input)
+    # Convert to DataFrame
+    df_input = pd.DataFrame([input_data])
 
-    # 3. Predict using the Wrapper (uses tuned threshold)
-    pred = model_wrapper.predict(final_input_df)[0]
-    
-    if pred == 1:
-        st.success("### Prediction: YES! Client likely to subscribe. ✅")
-    else:
-        st.error("### Prediction: NO. Client unlikely to subscribe. ❌")
-
-    # 4. SHAP EXPLANATION
-    st.subheader("🔍 Why did the model say that?")
+    # 2. Make Prediction
     try:
-        # STEP A: Unwrap the Pipeline from the TunedThresholdClassifierCV
-        # Based on your file, it's stored in .estimator_
-        pipeline = model_wrapper.estimator_ 
+        prediction = model.predict(df_input)[0]
+        # Handle cases where model might return probabilities or raw thresholds
         
-        # STEP B: Identify specific steps
-        # From your metadata: Step 0 is 'preprocessing', Step 1 is 'model'
-        preprocessor = pipeline.named_steps['preprocessing']
-        xgb_model = pipeline.named_steps['modeling']
-
-        # STEP C: Transform data for SHAP
-        # SHAP needs the numeric/encoded data that goes INTO the XGBoost
-        X_transformed = preprocessor.transform(final_input_df)
+        st.markdown("---")
+        st.subheader("Results")
         
-        # STEP D: Calculate SHAP values
-        explainer = shap.TreeExplainer(xgb_model)
-        shap_values = explainer.shap_values(X_transformed)
-
-        # STEP E: Visualizing (Force Plot)
-        st.set_option('deprecation.showPyplotGlobalUse', False)
-        
-        # Get feature names from preprocessor
-        feature_names = preprocessor.get_feature_names_out()
-
-        # Handle SHAP output format (XGBoost can return log-odds)
-        if isinstance(shap_values, list): # For some versions/multi-class
-            sv = shap_values[1]
-            ev = explainer.expected_value[1]
+        if prediction == 1:
+            st.success("## ✅ Prediction: Client will SUBSCRIBE")
         else:
-            sv = shap_values
-            ev = explainer.expected_value
+            st.error("## ❌ Prediction: Client will NOT SUBSCRIBE")
 
-        fig = shap.force_plot(
-            ev, 
-            sv[0], 
-            X_transformed[0], 
-            feature_names=feature_names, 
-            matplotlib=True, 
-            show=False
-        )
-        st.pyplot(fig, bbox_inches='tight')
-        st.caption("Red features push the prediction toward YES, Blue features toward NO.")
+        # ==========================================
+        # 4. SHAP VISUALIZATION
+        # ==========================================
+        st.subheader("🔍 Model Explanation (SHAP)")
+        with st.spinner('Calculating SHAP values...'):
+            try:
+                # 1. UNWRAP: Ambil Pipeline asli dari dalam wrapper TunedThreshold
+                # Berdasarkan debug kamu: model.estimator_ adalah Pipeline-nya
+                pipeline = model.estimator_ 
+                
+                # 2. IDENTIFY: Gunakan nama 'preprocessing' dan 'modeling' sesuai hasil debug
+                preprocessor = pipeline.named_steps['preprocessing'] 
+                classifier = pipeline.named_steps['modeling'] 
+                
+                # 3. TRANSFORM: Ubah data input user menjadi angka yang dimengerti XGBoost
+                transformed_data = preprocessor.transform(df_input)
+                
+                # 4. SHAP EXPLAINER: Gunakan TreeExplainer untuk XGBoost
+                explainer = shap.TreeExplainer(classifier)
+                shap_values = explainer.shap_values(transformed_data)
+                
+                # 5. FEATURE NAMES: Ambil nama kolom asli setelah preprocessing (OneHot, dll)
+                try:
+                    feature_names = preprocessor.get_feature_names_out()
+                except:
+                    # Fallback jika preprocessor tidak mendukung get_feature_names_out
+                    feature_names = [f"Feature {i}" for i in range(transformed_data.shape[1])]
 
-    except Exception as e:
-        st.error(f"SHAP Error: {e}")
-        st.info("Check if your pipeline step names are exactly 'preprocessing' and 'modeling'.")
+                # 6. PLOT: Tampilkan grafik force plot
+                st.set_option('deprecation.showPyplotGlobalUse', False)
+                
+                # Jika XGBoost mengembalikan list atau array 3D, kita ambil index untuk class 1
+                if isinstance(shap_values, list):
+                    sv = shap_values[1]
+                    ev = explainer.expected_value[1]
+                else:
+                    sv = shap_values
+                    ev = explainer.expected_value
+
+                fig = shap.force_plot(
+                    ev, 
+                    sv[0], 
+                    transformed_data[0], 
+                    feature_names=feature_names,
+                    matplotlib=True, 
+                    show=False
+                )
+                st.pyplot(fig, bbox_inches='tight')
+                st.caption("Interpretasi: Merah mendorong ke arah 'YES', Biru mendorong ke arah 'NO'.")
+
+            except Exception as e:
+                st.error(f"SHAP Error: {e}")
+                st.info("Pastikan library 'shap' dan 'matplotlib' sudah terinstal.")
