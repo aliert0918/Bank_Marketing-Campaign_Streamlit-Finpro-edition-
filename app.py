@@ -18,7 +18,8 @@ def load_model():
     with open(MODEL_FILE, 'rb') as file:
         return pickle.load(file)
 
-model_wrapper = load_model()
+# Load model wrapper (TunedThresholdClassifierCV)
+model = load_model()
 
 def add_engineered_features(df):
     df = df.copy()
@@ -70,6 +71,7 @@ with st.form("main_form"):
 # 3. PREDICTION & SHAP
 # ==========================================
 if predict_btn:
+    # 1. Prepare Data
     raw_input = pd.DataFrame([{
         'age': age, 'job': job, 'marital': marital, 'education': education,
         'default': default, 'housing': housing, 'loan': loan, 'contact': contact,
@@ -80,7 +82,9 @@ if predict_btn:
     }])
 
     df_final = add_engineered_features(raw_input)
-    prediction = model_wrapper.predict(df_final)[0]
+
+    # 2. Prediction
+    prediction = model.predict(df_final)[0]
     
     st.divider()
     if prediction == 1:
@@ -88,40 +92,43 @@ if predict_btn:
     else:
         st.error("### Prediction: NO (Will not subscribe) ❌")
 
-    st.subheader("🔍 SHAP Explanation")
+    # 3. SHAP Explanation
+    st.subheader("🔍 Kenapa Model Memprediksi Demikian?")
     try:
-        # Bongkar wrapper TunedThreshold ke Pipeline
-        pipeline = model_wrapper.estimator_ 
-        # Ambil step sesuai debug: 'preprocessing' dan 'modeling'
-        prep = pipeline.named_steps['preprocessing']
-        model_xgb = pipeline.named_steps['modeling']
+        # Bongkar wrapper ke pipeline internal
+        pipeline_internal = model.estimator_ 
         
-        # Transform data
+        # Ambil step 'preprocessing' dan 'modeling'
+        prep = pipeline_internal.named_steps['preprocessing']
+        xgb_mod = pipeline_internal.named_steps['modeling']
+        
+        # Transform data input
         X_transformed = prep.transform(df_final)
         
-        # SHAP calculation
-        explainer = shap.TreeExplainer(model_xgb)
+        # Kalkulasi SHAP
+        explainer = shap.TreeExplainer(xgb_mod)
         shap_values = explainer.shap_values(X_transformed)
         
-        # Nama fitur
+        # Dapatkan nama kolom fitur
         try:
-            feature_names = prep.get_feature_names_out()
+            feat_names = prep.get_feature_names_out()
         except:
-            feature_names = [f"Col_{i}" for i in range(X_transformed.shape[1])]
+            feat_names = [f"Col_{i}" for i in range(X_transformed.shape[1])]
 
-        st.set_option('deprecation.showPyplotGlobalUse', False)
-        
-        # Plotting
-        fig = shap.force_plot(
+        # Plotting menggunakan cara yang aman (matplotlib figure)
+        fig, ax = plt.subplots(figsize=(10, 3))
+        shap.force_plot(
             explainer.expected_value, 
             shap_values[0], 
             X_transformed[0], 
-            feature_names=feature_names,
+            feature_names=feat_names,
             matplotlib=True, 
             show=False
         )
-        st.pyplot(fig, bbox_inches='tight')
-        st.info("Info: Merah mendorong ke YES, Biru mendorong ke NO.")
+        st.pyplot(plt.gcf(), bbox_inches='tight')
+        plt.clf() # Bersihkan plot setelah tampil
+        
+        st.info("Merah: Mendorong ke arah YES | Biru: Mendorong ke arah NO")
 
     except Exception as e:
-        st.error(f"SHAP Error: {e}")
+        st.error(f"Gagal memuat SHAP: {e}")
