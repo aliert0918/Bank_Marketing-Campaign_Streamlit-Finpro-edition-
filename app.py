@@ -169,43 +169,90 @@ if submit_button and model is not None:
         # 4. SHAP VISUALIZATION
         # ==========================================
         st.subheader("🔍 Model Explanation (SHAP)")
-        with st.spinner('Calculating SHAP values...'):
-            try:
-                # We need to access the underlying classifier and preprocessor
-                # This logic assumes model is a Pipeline or similar structure
-                # Step A: Transform input using the pipeline's preprocessor
-                if hasattr(model, 'named_steps') and 'columntransformer' in model.named_steps:
-                    # Rename this key to match your specific pipeline step name (e.g., 'preprocessor', 'columntransformer')
-                    # Common names: 'preprocessor', 'transform', 'column_transformer'
-                    preprocessor = model.named_steps['columntransformer'] 
-                    classifier = model.named_steps['classifier'] # Or the final estimator name
-                    
-                    # Transform the data
-                    transformed_data = preprocessor.transform(df_input)
-                    
-                    # Create Explainer (TreeExplainer is faster for XGB/RF/LightGBM)
-                    # Note: We use a small background dataset or just the model if it's Tree-based
-                    explainer = shap.TreeExplainer(classifier)
-                    shap_values = explainer.shap_values(transformed_data)
-                    
-                    # If binary classification, shap_values might be a list. Take the positive class.
-                    if isinstance(shap_values, list):
-                        shap_values = shap_values[1]
-                        
-                    # Visualization
-                    st.set_option('deprecation.showPyplotGlobalUse', False)
-                    fig = shap.force_plot(explainer.expected_value, shap_values[0], df_input.iloc[0], matplotlib=True, show=False)
-                    st.pyplot(fig, bbox_inches='tight')
-                    
-                else:
-                    # Fallback for complex custom objects like TunedThresholdClassifierCV
-                    # If we can't easily unwrap it, we skip SHAP or use a KernelExplainer (slow)
-                    st.warning("Could not extract internal classifier for SHAP visualization. Displaying raw inputs instead.")
-                    st.write(df_input)
+        
+        # Helper function to find the Pipeline inside the TunedThresholdClassifierCV
+        def get_pipeline(model_object):
+            # 1. If it's the TunedThreshold wrapper, look inside
+            if hasattr(model_object, 'estimator_'):
+                return model_object.estimator_
+            elif hasattr(model_object, 'estimator'):
+                return model_object.estimator
+            # 2. If it's already the pipeline, return it
+            return model_object
 
-            except Exception as e:
-                st.warning(f"SHAP visualization skipped: {e}")
-                st.info("Note: SHAP requires access to the internal preprocessor and classifier structure.")
+        try:
+            with st.spinner('Calculating SHAP values...'):
+                # 1. Unwrap the model to get the actual Pipeline
+                pipeline = get_pipeline(model)
+                
+                # 2. Locate Preprocessor and Classifier inside the Pipeline
+                # We search for the step that handles transformations (usually first)
+                # and the step that handles prediction (usually last)
+                
+                if hasattr(pipeline, 'named_steps'):
+                    # A. Extract Preprocessor
+                    # Try common names for the column transformer
+                    preprocessor = None
+                    for name in ['columntransformer', 'preprocessor', 'transformer', 'compose']:
+                        if name in pipeline.named_steps:
+                            preprocessor = pipeline.named_steps[name]
+                            break
+                    
+                    # B. Extract Classifier
+                    # Usually the last step in the pipeline
+                    classifier = pipeline.steps[-1][1]
+                    
+                    if preprocessor and classifier:
+                        # 3. Transform the data
+                        # SHAP needs the data *after* it has been encoded (OneHot, Scaler, etc.)
+                        transformed_data = preprocessor.transform(df_input)
+                        
+                        # 4. Create SHAP Explainer
+                        # TreeExplainer is best for XGBoost/RandomForest/LightGBM
+                        # LinearExplainer is best for LogisticRegression
+                        
+                        # Check what kind of classifier it is to choose the right explainer
+                        model_type = type(classifier).__name__.lower()
+                        
+                        if 'xgb' in model_type or 'forest' in model_type or 'tree' in model_type or 'lgbm' in model_type:
+                            explainer = shap.TreeExplainer(classifier)
+                            shap_values = explainer.shap_values(transformed_data)
+                        elif 'linear' in model_type or 'logistic' in model_type:
+                            explainer = shap.LinearExplainer(classifier, transformed_data)
+                            shap_values = explainer.shap_values(transformed_data)
+                        else:
+                            # Generic fallback (slower)
+                            explainer = shap.KernelExplainer(classifier.predict, transformed_data)
+                            shap_values = explainer.shap_values(transformed_data)
+
+                        # 5. Handle Binary Classification Output
+                        # SHAP often returns a list [values_for_class_0, values_for_class_1]
+                        if isinstance(shap_values, list):
+                            # We want to explain Class 1 (Subscription)
+                            vals_to_plot = shap_values[1]
+                        else:
+                            vals_to_plot = shap_values
+
+                        # 6. Plot
+                        st.set_option('deprecation.showPyplotGlobalUse', False)
+                        # We use matplotlib=True so Streamlit can render the figure
+                        fig = shap.force_plot(
+                            explainer.expected_value[1] if isinstance(explainer.expected_value, list) else explainer.expected_value,
+                            vals_to_plot[0], 
+                            feature_names=[f"Feature {i}" for i in range(transformed_data.shape[1])], # Temporary names if columns lost
+                            matplotlib=True,
+                            show=False
+                        )
+                        st.pyplot(fig, bbox_inches='tight')
+                    else:
+                        st.warning("Could not automatically locate 'columntransformer' or 'classifier' in the pipeline steps.")
+                        st.write("Pipeline steps found:", pipeline.named_steps.keys())
+                else:
+                    st.warning("The unwrapped model does not look like a standard Scikit-Learn Pipeline.")
+
+        except Exception as e:
+            st.error(f"SHAP Error: {str(e)}")
+            st.info("Debugging Tip: Ensure your pipeline steps are named 'columntransformer' and 'classifier', or update the code to match your specific naming convention.")
 
     except Exception as e:
         st.error(f"Error during prediction: {e}")
