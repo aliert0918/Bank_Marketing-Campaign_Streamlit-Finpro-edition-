@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 import pickle
 import shap
@@ -146,80 +147,53 @@ if submitted:
     # --- SHAP untuk XGBoost ---
     st.subheader("Penjelasan Model (SHAP)")
 
+    def st_shap(plot, height=None):
+    shap_html = f"<head>{shap.getjs()}</head><body>{plot.html()}</body>"
+    components.html(shap_html, height=height if height else 400, scrolling=True)
+
+# ... (Kode pipeline loading Anda sebelumnya) ...
+
+# --- Bagian try-except SHAP yang baru ---
+try:
+    # 1. Identifikasi Preprocessor & Model (Gunakan index agar aman)
+    preprocessor = model.steps[0][1]
+    model_estimator = model.steps[-1][1]
+    
+    # 2. Transformasi data input
+    X_processed = preprocessor.transform(input_df)
+    
+    # 3. Hitung SHAP Values
+    explainer = shap.TreeExplainer(model_estimator)
+    shap_values = explainer.shap_values(X_processed)
+    
+    # Handling format output SHAP (jika list, ambil kelas positif/index 1)
+    if isinstance(shap_values, list):
+        shap_values_to_plot = shap_values[1]
+        expected_value = explainer.expected_value[1]
+    else:
+        shap_values_to_plot = shap_values
+        expected_value = explainer.expected_value
+
+    # 4. Ambil nama fitur (supaya grafik ada labelnya, bukan cuma Feature 0, 1...)
     try:
-        # Ambil pipeline dari TunedThresholdClassifierCV
-        pipeline = model_wrapper.estimator_ if hasattr(model_wrapper, "estimator_") else model_wrapper.estimator
+        feature_names = preprocessor.get_feature_names_out()
+    except AttributeError:
+        feature_names = [f"Feature {i}" for i in range(X_processed.shape[1])]
 
-        # Nama step sesuai notebook: preprocessing, modeling
-        preprocessor = pipeline.named_steps["preprocessing"]
-        xgb_model = pipeline.named_steps["modeling"]
+    # 5. Visualisasi (HAPUS st.set_option yang bikin error)
+    st.write("Grafik ini menunjukkan fitur mana yang mendorong prediksi ke arah 'YES' (merah) atau 'NO' (biru).")
+    
+    # Gunakan matplotlib=False agar grafiknya interaktif (bisa di-hover mouse)
+    force_plot = shap.force_plot(
+        expected_value,
+        shap_values_to_plot[0], # Ambil data pertama
+        X_processed[0],         # Ambil data pertama
+        feature_names=feature_names,
+        matplotlib=False        # PENTING: Set False agar jadi JavaScript
+    )
+    
+    # Tampilkan menggunakan fungsi helper
+    st_shap(force_plot)
 
-        # Transform input
-        X_trans = preprocessor.transform(input_df)
-
-        # Feature names setelah transform (kalau tersedia)
-        feature_names = None
-        if hasattr(preprocessor, "get_feature_names_out"):
-            try:
-                feature_names = preprocessor.get_feature_names_out()
-            except Exception:
-                feature_names = None
-
-        # SHAP explainer
-        explainer = shap.TreeExplainer(xgb_model)
-        shap_values = explainer.shap_values(X_trans)
-
-        # Normalisasi bentuk shap_values untuk kasus binary:
-        # - kadang array (n_samples, n_features)
-        # - kadang list [class0, class1]
-        if isinstance(shap_values, list):
-            # ambil kontribusi untuk class 1
-            shap_row = shap_values[1][0]
-            expected_value = explainer.expected_value[1] if isinstance(explainer.expected_value, (list, np.ndarray)) else explainer.expected_value
-        else:
-            shap_row = shap_values[0]
-            expected_value = explainer.expected_value
-
-        # Pastikan 1D vector
-        shap_row = np.array(shap_row).ravel()
-
-        # Ambil 1 row data
-        x_row = np.array(X_trans[0]).ravel()
-
-        st.set_option("deprecation.showPyplotGlobalUse", False)
-
-        # Force plot matplotlib
-        fig = shap.force_plot(
-            expected_value,
-            shap_row,
-            x_row,
-            feature_names=feature_names,
-            matplotlib=True,
-            show=False
-        )
-        st.pyplot(fig, bbox_inches="tight")
-
-        # Tambahan: bar plot top features (lebih “streamlit-friendly”)
-        st.caption("Top kontribusi fitur (|SHAP| terbesar):")
-        topk = min(15, len(shap_row))
-        idx = np.argsort(np.abs(shap_row))[::-1][:topk]
-
-        top_feat = [feature_names[i] if feature_names is not None else f"f_{i}" for i in idx]
-        top_val = shap_row[idx]
-
-        fig2, ax = plt.subplots(figsize=(8, 5))
-        colors = ["#d62728" if v < 0 else "#2ca02c" for v in top_val]
-        ax.barh(top_feat[::-1], top_val[::-1], color=colors[::-1])
-        ax.set_xlabel("SHAP value (impact on model output)")
-        ax.set_ylabel("Feature")
-        ax.set_title("Top SHAP contributions")
-        st.pyplot(fig2, bbox_inches="tight")
-
-    except Exception as e:
-        st.warning(f"Gagal memuat SHAP: {e}")
-        st.info(
-            "Kemungkinan penyebab umum:\n"
-            "1) Nama step pipeline tidak cocok (harusnya 'preprocessing' & 'modeling' sesuai notebook).\n"
-            "2) Versi library berbeda dari environment training (lihat requirements di notebook).\n"
-            "3) Preprocessor tidak punya get_feature_names_out (tergantung sklearn/version)."
-        )
+except Exception as e:
+    st.error(f"Gagal memuat SHAP: {e}")
