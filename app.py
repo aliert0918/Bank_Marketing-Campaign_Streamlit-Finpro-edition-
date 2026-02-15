@@ -165,56 +165,59 @@ if submit_button and model is not None:
         else:
             st.error("## ❌ Prediction: Client will NOT SUBSCRIBE")
 
-        # ==========================================
+       # ==========================================
         # 4. SHAP VISUALIZATION
         # ==========================================
         st.subheader("🔍 Model Explanation (SHAP)")
-        with st.spinner('Calculating SHAP values...'):
-            try:
-                # 1. UNWRAP: Ambil Pipeline asli dari dalam wrapper TunedThreshold
-                # Berdasarkan debug kamu: model.estimator_ adalah Pipeline-nya
+        
+        # Gunakan try-except tunggal yang bersih agar tidak bingung indentasi
+        try:
+            with st.spinner('Calculating SHAP values...'):
+                # Langkah 1: Bongkar Wrapper
+                # model_wrapper -> TunedThresholdClassifierCV
+                # .estimator_ -> Pipeline
                 pipeline = model.estimator_ 
                 
-                # 2. IDENTIFY: Gunakan nama 'preprocessing' dan 'modeling' sesuai hasil debug
+                # Langkah 2: Ambil step sesuai hasil debug kamu tadi
                 preprocessor = pipeline.named_steps['preprocessing'] 
                 classifier = pipeline.named_steps['modeling'] 
                 
-                # 3. TRANSFORM: Ubah data input user menjadi angka yang dimengerti XGBoost
+                # Langkah 3: Transformasi data
                 transformed_data = preprocessor.transform(df_input)
                 
-                # 4. SHAP EXPLAINER: Gunakan TreeExplainer untuk XGBoost
+                # Langkah 4: Hitung SHAP (Gunakan TreeExplainer untuk XGBoost)
                 explainer = shap.TreeExplainer(classifier)
                 shap_values = explainer.shap_values(transformed_data)
                 
-                # 5. FEATURE NAMES: Ambil nama kolom asli setelah preprocessing (OneHot, dll)
+                # Langkah 5: Ambil nama fitur
                 try:
                     feature_names = preprocessor.get_feature_names_out()
                 except:
-                    # Fallback jika preprocessor tidak mendukung get_feature_names_out
-                    feature_names = [f"Feature {i}" for i in range(transformed_data.shape[1])]
+                    feature_names = [f"Col_{i}" for i in range(transformed_data.shape[1])]
 
-                # 6. PLOT: Tampilkan grafik force plot
+                # Langkah 6: Plotting
                 st.set_option('deprecation.showPyplotGlobalUse', False)
                 
-                # Jika XGBoost mengembalikan list atau array 3D, kita ambil index untuk class 1
-                if isinstance(shap_values, list):
-                    sv = shap_values[1]
-                    ev = explainer.expected_value[1]
-                else:
-                    sv = shap_values
-                    ev = explainer.expected_value
+                # Logic untuk handle output XGBoost (Expected Value & SHAP Values)
+                ev = explainer.expected_value
+                sv = shap_values[0] # Ambil baris pertama (data user)
+
+                # Jika sv berupa list (biasanya untuk multiclass/binary tertentu)
+                if isinstance(sv, list):
+                    sv = sv[1]
+                    ev = ev[1]
 
                 fig = shap.force_plot(
                     ev, 
-                    sv[0], 
+                    sv, 
                     transformed_data[0], 
                     feature_names=feature_names,
                     matplotlib=True, 
                     show=False
                 )
                 st.pyplot(fig, bbox_inches='tight')
-                st.caption("Interpretasi: Merah mendorong ke arah 'YES', Biru mendorong ke arah 'NO'.")
+                st.write("Interpretasi: Fitur **Merah** meningkatkan peluang berlangganan, fitur **Biru** menurunkannya.")
 
-            except Exception as e:
-                st.error(f"SHAP Error: {e}")
-                st.info("Pastikan library 'shap' dan 'matplotlib' sudah terinstal.")
+        except Exception as e:
+            st.warning(f"SHAP gagal ditampilkan: {e}")
+            st.info("Saran: Cek apakah data input sudah lengkap dan sesuai format.")
