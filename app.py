@@ -2,150 +2,224 @@ import streamlit as st
 import pandas as pd
 import pickle
 import shap
-import matplotlib.pyplot as plt
 import numpy as np
+import matplotlib.pyplot as plt
 
 # ==========================================
 # 1. LOAD MODEL & SETUP
 # ==========================================
 st.set_page_config(page_title="Bank Marketing Deployment", layout="wide")
 
-MODEL_FILE = 'threshold_tuned_BankMarketingFinpro_FOR_DEPLOYMENT_20260215_11_49.pkl'
+MODEL_FILE = "threshold_tuned_BankMarketingFinpro_FOR_DEPLOYMENT_20260215_11_49.pkl"
 
 @st.cache_resource
-def load_model():
-    with open(MODEL_FILE, 'rb') as file:
-        return pickle.load(file)
+def load_model(path: str):
+    with open(path, "rb") as f:
+        return pickle.load(f)
 
-model_wrapper = load_model()
+model_wrapper = load_model(MODEL_FILE)
 
 # ==========================================
-# 2. DEFINISI INPUT (Berdasarkan Dataset)
+# 2. FEATURE ENGINEERING (sesuai notebook vertopal)
 # ==========================================
-# Data kategori dari kolom_kategori_unique_values.csv [cite: 2]
-# Data numerik dari kolom_numerik_range.csv [cite: 3]
+def feature_engineering(df_input: pd.DataFrame) -> pd.DataFrame:
+    df = df_input.copy()
 
-st.title("🏦 Bank Marketing Campaign Predictor")
+    # Sama persis seperti notebook
+    df["contacted_before"] = (df["pdays"] != 999).astype(int)
+    df["previous_success"] = (df["poutcome"] == "success").astype(int)
+
+    success_months = ["mar", "dec", "sep", "oct"]
+    df["is_success_month"] = df["month"].isin(success_months).astype(int)
+
+    df["euribor_low"] = (df["euribor3m"] <= 1.5).astype(int)
+
+    return df
+
+# ==========================================
+# 3. UI INPUT
+# ==========================================
+st.title("Bank Marketing Campaign Predictor")
 st.info("Aplikasi ini memprediksi apakah nasabah akan berlangganan deposit berjangka.")
 
 with st.form("main_form"):
-    # Group 1: Demographics
-    st.subheader("👤 Profil Nasabah")
+    st.subheader("Profil Nasabah")
     col1, col2 = st.columns(2)
+
     with col1:
-        age = st.slider("Umur", 17, 98, 38) # [cite: 3]
-        job = st.selectbox("Pekerjaan", ['housemaid', 'services', 'admin.', 'blue-collar', 'technician', 'retired', 'management', 'unemployed', 'self-employed', 'unknown', 'entrepreneur', 'student']) # [cite: 2]
-        marital = st.selectbox("Status Pernikahan", ['married', 'single', 'divorced', 'unknown']) # [cite: 2]
+        age = st.slider("Umur", 17, 98, 38)
+        job = st.selectbox(
+            "Pekerjaan",
+            ['housemaid', 'services', 'admin.', 'blue-collar', 'technician', 'retired',
+             'management', 'unemployed', 'self-employed', 'unknown', 'entrepreneur', 'student']
+        )
+        marital = st.selectbox("Status Pernikahan", ['married', 'single', 'divorced', 'unknown'])
+
     with col2:
-        education = st.selectbox("Pendidikan", ['basic.4y', 'high.school', 'basic.6y', 'basic.9y', 'professional.course', 'unknown', 'university.degree', 'illiterate']) # [cite: 2]
-        default = st.selectbox("Memiliki Gagal Bayar?", ['no', 'unknown', 'yes']) # [cite: 2]
-        housing = st.selectbox("Pinjaman Perumahan?", ['no', 'yes', 'unknown']) # [cite: 2]
-        loan = st.selectbox("Pinjaman Pribadi?", ['no', 'yes', 'unknown']) # [cite: 2]
+        education = st.selectbox(
+            "Pendidikan",
+            ['basic.4y', 'high.school', 'basic.6y', 'basic.9y',
+             'professional.course', 'unknown', 'university.degree', 'illiterate']
+        )
+        default = st.selectbox("Memiliki Gagal Bayar?", ['no', 'unknown', 'yes'])
+        housing = st.selectbox("Pinjaman Perumahan?", ['no', 'yes', 'unknown'])
+        loan = st.selectbox("Pinjaman Pribadi?", ['no', 'yes', 'unknown'])
 
-    # Group 2: Campaign History
-    st.subheader("📞 Riwayat Kampanye")
+    st.subheader("Riwayat Kampanye")
     col3, col4 = st.columns(2)
-    with col3:
-        contact = st.selectbox("Alat Komunikasi", ['telephone', 'cellular']) # [cite: 2]
-        month = st.selectbox("Bulan Kontak Terakhir", ['may', 'jun', 'jul', 'aug', 'oct', 'nov', 'dec', 'mar', 'apr', 'sep']) # [cite: 2]
-        day_of_week = st.selectbox("Hari Kontak Terakhir", ['mon', 'tue', 'wed', 'thu', 'fri']) # [cite: 2]
-        campaign = st.number_input("Jumlah Kontak Selama Kampanye Ini", 1, 56, 1) # [cite: 3]
-    with col4:
-        pdays = st.number_input("Hari Sejak Kontak Terakhir (999=Belum Pernah)", 0, 999, 999) # [cite: 3]
-        previous = st.number_input("Jumlah Kontak Sebelum Kampanye Ini", 0, 7, 0) # [cite: 3]
-        poutcome = st.selectbox("Hasil Kampanye Sebelumnya", ['nonexistent', 'failure', 'success']) # [cite: 2]
 
-    # Group 3: Economic & Engineered Features
-    st.subheader("📈 Indikator Ekonomi & Fitur Tambahan")
+    with col3:
+        contact = st.selectbox("Alat Komunikasi", ['telephone', 'cellular'])
+        month = st.selectbox("Bulan Kontak Terakhir", ['may', 'jun', 'jul', 'aug', 'oct', 'nov', 'dec', 'mar', 'apr', 'sep'])
+        day_of_week = st.selectbox("Hari Kontak Terakhir", ['mon', 'tue', 'wed', 'thu', 'fri'])
+        campaign = st.number_input("Jumlah Kontak Selama Kampanye Ini", min_value=1, max_value=56, value=1)
+
+    with col4:
+        pdays = st.number_input("Hari Sejak Kontak Terakhir (999=Belum Pernah)", min_value=0, max_value=999, value=999)
+        previous = st.number_input("Jumlah Kontak Sebelum Kampanye Ini", min_value=0, max_value=7, value=0)
+        poutcome = st.selectbox("Hasil Kampanye Sebelumnya", ['nonexistent', 'failure', 'success'])
+
+    st.subheader("Indikator Ekonomi")
     col5, col6 = st.columns(2)
+
     with col5:
-        emp_var_rate = st.number_input("Employment Variation Rate", -3.4, 1.4, 1.1) # [cite: 3]
-        cons_price_idx = st.number_input("Consumer Price Index", 92.201, 94.767, 93.994) # [cite: 3]
-        cons_conf_idx = st.number_input("Consumer Confidence Index", -50.8, -26.9, -36.4) # [cite: 3]
+        emp_var_rate = st.number_input("Employment Variation Rate", min_value=-3.4, max_value=1.4, value=1.1)
+        cons_price_idx = st.number_input("Consumer Price Index", min_value=92.201, max_value=94.767, value=93.994)
+        cons_conf_idx = st.number_input("Consumer Confidence Index", min_value=-50.8, max_value=-26.9, value=-36.4)
+
     with col6:
-        euribor3m = st.number_input("Euribor 3 Month Rate", 0.634, 5.045, 4.857) # [cite: 3]
-        nr_employed = st.number_input("Number of Employees", 4963.6, 5228.1, 5228.1) # [cite: 3]
-        
-        # Engineered Features dari column_names.txt 
-        contacted_before = st.selectbox("Pernah Dikontak Sebelumnya? (1=Ya, 0=Tidak)", [0, 1])
-        previous_success = st.selectbox("Sukses di Masa Lalu? (1=Ya, 0=Tidak)", [0, 1])
-        is_success_month = st.selectbox("Bulan Sukses? (1=Ya, 0=Tidak)", [0, 1])
-        euribor_low = st.selectbox("Euribor Rendah? (1=Ya, 0=Tidak)", [0, 1])
+        euribor3m = st.number_input("Euribor 3 Month Rate", min_value=0.634, max_value=5.045, value=4.857)
+        nr_employed = st.number_input("Number of Employees", min_value=4963.6, max_value=5228.1, value=5228.1)
 
     submitted = st.form_submit_button("Prediksi")
 
 # ==========================================
-# 3. PREDICTION & SHAP LOGIC
+# 4. PREDICTION & SHAP
 # ==========================================
 if submitted:
-    # Buat DataFrame sesuai urutan column_names.txt 
-    input_df = pd.DataFrame([{
-        'age': age, 'job': job, 'marital': marital, 'education': education,
-        'default': default, 'housing': housing, 'loan': loan, 'contact': contact,
-        'month': month, 'day_of_week': day_of_week, 'campaign': campaign,
-        'pdays': pdays, 'previous': previous, 'poutcome': poutcome,
-        'emp.var.rate': emp_var_rate, 'cons.price.idx': cons_price_idx,
-        'cons.conf.idx': cons_conf_idx, 'euribor3m': euribor3m, 'nr.employed': nr_employed,
-        'contacted_before': contacted_before, 'previous_success': previous_success,
-        'is_success_month': is_success_month, 'euribor_low': euribor_low
+    # Input RAW sesuai fitur asli dataset (tanpa fitur turunan manual)
+    input_raw = pd.DataFrame([{
+        "age": age,
+        "job": job,
+        "marital": marital,
+        "education": education,
+        "default": default,
+        "housing": housing,
+        "loan": loan,
+        "contact": contact,
+        "month": month,
+        "day_of_week": day_of_week,
+        "campaign": campaign,
+        "pdays": pdays,
+        "previous": previous,
+        "poutcome": poutcome,
+        "emp.var.rate": emp_var_rate,
+        "cons.price.idx": cons_price_idx,
+        "cons.conf.idx": cons_conf_idx,
+        "euribor3m": euribor3m,
+        "nr.employed": nr_employed,
     }])
 
-    # Prediksi menggunakan wrapper (menggunakan threshold yang sudah di-tune)
-    prediction = model_wrapper.predict(input_df)[0]
-    
+    # Terapkan feature engineering sesuai training
+    input_df = feature_engineering(input_raw)
+
+    # Prediksi label (sudah pakai tuned threshold di wrapper)
+    pred = int(model_wrapper.predict(input_df)[0])
+
+    # Probabilitas (kalau tersedia)
+    proba = None
+    if hasattr(model_wrapper, "predict_proba"):
+        try:
+            proba = float(model_wrapper.predict_proba(input_df)[0, 1])
+        except Exception:
+            proba = None
+
     st.markdown("---")
-    if prediction == 1:
-        st.success("### HASIL: Nasabah diprediksi akan BERLANGGANAN (YES) ✅")
+    if pred == 1:
+        st.success("### HASIL: Nasabah diprediksi akan BERLANGGANAN (YES)")
     else:
-        st.error("### HASIL: Nasabah diprediksi TIDAK akan berlangganan (NO) ❌")
+        st.error("### HASIL: Nasabah diprediksi TIDAK akan berlangganan (NO)")
 
-    # Bagian Penjelasan Model (SHAP)
-st.subheader("Penjelasan Model (SHAP)")
+    if proba is not None:
+        st.write(f"Probabilitas (kelas YES): **{proba:.3f}**")
 
-try:
-    # 1. Identifikasi Preprocessor dan Model secara Dinamis
-    # Alih-alih menebak nama ('transformer' vs 'preprocessor'), kita ambil berdasarkan urutan.
-    # Biasanya: langkah pertama [0] adalah preprocessor, langkah terakhir [-1] adalah model.
-    
-    preprocessor = model.steps[0][1]  # Mengambil object transformer
-    model_estimator = model.steps[-1][1] # Mengambil object model prediksi (misal: RandomForest/XGBoost)
-    
-    # 2. Transformasi data input
-    # SHAP membutuhkan data yang sudah di-encode/scale, bukan data mentah string.
-    X_processed = preprocessor.transform(input_df)
-    
-    # 3. Hitung SHAP Values
-    # Menggunakan TreeExplainer (umum untuk Random Forest/Gradient Boosting)
-    explainer = shap.TreeExplainer(model_estimator)
-    shap_values = explainer.shap_values(X_processed)
-    
-    # Menangani format output SHAP (terkadang list, terkadang array tergantung model)
-    if isinstance(shap_values, list):
-        # Untuk klasifikasi biner, biasanya shap_values[1] adalah kelas positif (Yes/Berlangganan)
-        shap_values_to_plot = shap_values[1]
-    else:
-        shap_values_to_plot = shap_values
+    # --- SHAP untuk XGBoost ---
+    st.subheader("Penjelasan Model (SHAP)")
 
-    # 4. Tampilkan Force Plot
-    st.write("Grafik ini menunjukkan fitur mana yang mendorong prediksi ke arah 'YES' (merah) atau 'NO' (biru).")
-    
-    # Mendapatkan nama fitur setelah one-hot encoding (jika ada)
     try:
-        feature_names = preprocessor.get_feature_names_out()
-    except AttributeError:
-        # Fallback jika model versi lama atau tidak support get_feature_names_out
-        feature_names = [f"Feature {i}" for i in range(X_processed.shape[1])]
+        # Ambil pipeline dari TunedThresholdClassifierCV
+        pipeline = model_wrapper.estimator_ if hasattr(model_wrapper, "estimator_") else model_wrapper.estimator
 
-    # Visualisasi
-    st_shap(shap.force_plot(
-        explainer.expected_value[1] if isinstance(explainer.expected_value, list) else explainer.expected_value, 
-        shap_values_to_plot, 
-        X_processed,
-        feature_names=feature_names
-    ))
+        # Nama step sesuai notebook: preprocessing, modeling
+        preprocessor = pipeline.named_steps["preprocessing"]
+        xgb_model = pipeline.named_steps["modeling"]
 
-except Exception as e:
-    st.error(f"Terjadi kesalahan saat memuat SHAP: {e}")
-    # Debugging: Tampilkan nama langkah yang tersedia di pipeline untuk pengecekan
-    if hasattr(model, 'named_steps'):
-        st.info(f"Nama langkah (steps) yang tersedia di model: {list(model.named_steps.keys())}")
+        # Transform input
+        X_trans = preprocessor.transform(input_df)
+
+        # Feature names setelah transform (kalau tersedia)
+        feature_names = None
+        if hasattr(preprocessor, "get_feature_names_out"):
+            try:
+                feature_names = preprocessor.get_feature_names_out()
+            except Exception:
+                feature_names = None
+
+        # SHAP explainer
+        explainer = shap.TreeExplainer(xgb_model)
+        shap_values = explainer.shap_values(X_trans)
+
+        # Normalisasi bentuk shap_values untuk kasus binary:
+        # - kadang array (n_samples, n_features)
+        # - kadang list [class0, class1]
+        if isinstance(shap_values, list):
+            # ambil kontribusi untuk class 1
+            shap_row = shap_values[1][0]
+            expected_value = explainer.expected_value[1] if isinstance(explainer.expected_value, (list, np.ndarray)) else explainer.expected_value
+        else:
+            shap_row = shap_values[0]
+            expected_value = explainer.expected_value
+
+        # Pastikan 1D vector
+        shap_row = np.array(shap_row).ravel()
+
+        # Ambil 1 row data
+        x_row = np.array(X_trans[0]).ravel()
+
+        st.set_option("deprecation.showPyplotGlobalUse", False)
+
+        # Force plot matplotlib
+        fig = shap.force_plot(
+            expected_value,
+            shap_row,
+            x_row,
+            feature_names=feature_names,
+            matplotlib=True,
+            show=False
+        )
+        st.pyplot(fig, bbox_inches="tight")
+
+        # Tambahan: bar plot top features (lebih “streamlit-friendly”)
+        st.caption("Top kontribusi fitur (|SHAP| terbesar):")
+        topk = min(15, len(shap_row))
+        idx = np.argsort(np.abs(shap_row))[::-1][:topk]
+
+        top_feat = [feature_names[i] if feature_names is not None else f"f_{i}" for i in idx]
+        top_val = shap_row[idx]
+
+        fig2, ax = plt.subplots(figsize=(8, 5))
+        colors = ["#d62728" if v < 0 else "#2ca02c" for v in top_val]
+        ax.barh(top_feat[::-1], top_val[::-1], color=colors[::-1])
+        ax.set_xlabel("SHAP value (impact on model output)")
+        ax.set_ylabel("Feature")
+        ax.set_title("Top SHAP contributions")
+        st.pyplot(fig2, bbox_inches="tight")
+
+    except Exception as e:
+        st.warning(f"Gagal memuat SHAP: {e}")
+        st.info(
+            "Kemungkinan penyebab umum:\n"
+            "1) Nama step pipeline tidak cocok (harusnya 'preprocessing' & 'modeling' sesuai notebook).\n"
+            "2) Versi library berbeda dari environment training (lihat requirements di notebook).\n"
+            "3) Preprocessor tidak punya get_feature_names_out (tergantung sklearn/version)."
+        )
