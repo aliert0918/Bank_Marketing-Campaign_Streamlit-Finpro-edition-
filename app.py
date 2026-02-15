@@ -99,47 +99,53 @@ if submitted:
     else:
         st.error("### HASIL: Nasabah diprediksi TIDAK akan berlangganan (NO) ❌")
 
-    # --- Bagian SHAP (Revisi untuk XGBoost) ---
-    st.subheader("🔍 Penjelasan Model (SHAP)")
+    # Bagian Penjelasan Model (SHAP)
+st.subheader("Penjelasan Model (SHAP)")
+
+try:
+    # 1. Identifikasi Preprocessor dan Model secara Dinamis
+    # Alih-alih menebak nama ('transformer' vs 'preprocessor'), kita ambil berdasarkan urutan.
+    # Biasanya: langkah pertama [0] adalah preprocessor, langkah terakhir [-1] adalah model.
+    
+    preprocessor = model.steps[0][1]  # Mengambil object transformer
+    model_estimator = model.steps[-1][1] # Mengambil object model prediksi (misal: RandomForest/XGBoost)
+    
+    # 2. Transformasi data input
+    # SHAP membutuhkan data yang sudah di-encode/scale, bukan data mentah string.
+    X_processed = preprocessor.transform(input_df)
+    
+    # 3. Hitung SHAP Values
+    # Menggunakan TreeExplainer (umum untuk Random Forest/Gradient Boosting)
+    explainer = shap.TreeExplainer(model_estimator)
+    shap_values = explainer.shap_values(X_processed)
+    
+    # Menangani format output SHAP (terkadang list, terkadang array tergantung model)
+    if isinstance(shap_values, list):
+        # Untuk klasifikasi biner, biasanya shap_values[1] adalah kelas positif (Yes/Berlangganan)
+        shap_values_to_plot = shap_values[1]
+    else:
+        shap_values_to_plot = shap_values
+
+    # 4. Tampilkan Force Plot
+    st.write("Grafik ini menunjukkan fitur mana yang mendorong prediksi ke arah 'YES' (merah) atau 'NO' (biru).")
+    
+    # Mendapatkan nama fitur setelah one-hot encoding (jika ada)
     try:
-        # 1. Bongkar TunedThresholdClassifierCV untuk mendapatkan Pipeline
-        # Biasanya pipeline ada di atribut .estimator_ (dengan underscore di akhir setelah fit)
-        pipeline = model_wrapper.estimator_ if hasattr(model_wrapper, 'estimator_') else model_wrapper.estimator
-        
-        # 2. Ambil transformer dan model XGBoost
-        # Sesuaikan 'transformer' dan 'model' dengan nama step di pipeline kamu
-        # Jika kamu tidak yakin namanya, gunakan pipeline.named_steps.keys()
-        transformer = pipeline.named_steps['transformer'] 
-        xgb_model = pipeline.named_steps['model']
+        feature_names = preprocessor.get_feature_names_out()
+    except AttributeError:
+        # Fallback jika model versi lama atau tidak support get_feature_names_out
+        feature_names = [f"Feature {i}" for i in range(X_processed.shape[1])]
 
-        # 3. Transform data input
-        X_transformed = transformer.transform(input_df)
-        
-        # 4. Hitung SHAP
-        explainer = shap.TreeExplainer(xgb_model)
-        shap_values = explainer.shap_values(X_transformed)
+    # Visualisasi
+    st_shap(shap.force_plot(
+        explainer.expected_value[1] if isinstance(explainer.expected_value, list) else explainer.expected_value, 
+        shap_values_to_plot, 
+        X_processed,
+        feature_names=feature_names
+    ))
 
-        # 5. Visualisasi
-        st.set_option('deprecation.showPyplotGlobalUse', False)
-        
-        # Ambil nama fitur setelah transformasi (untuk OneHotEncoding)
-        feature_names = transformer.get_feature_names_out()
-        
-        # Plot force plot untuk data pertama (indeks 0)
-        # Jika binary classification, shap_values bisa berupa list atau array 2D
-        expected_value = explainer.expected_value
-        current_shap = shap_values[0] if len(shap_values.shape) == 2 else shap_values[0][:, 1]
-
-        fig = shap.force_plot(
-            expected_value, 
-            current_shap, 
-            X_transformed[0], 
-            feature_names=feature_names, 
-            matplotlib=True, 
-            show=False
-        )
-        st.pyplot(fig, bbox_inches='tight')
-        
-    except Exception as e:
-        st.warning(f"Gagal memuat SHAP: {e}")
-        st.info("Tips: Pastikan nama step di pipeline adalah 'transformer' dan 'model'.")
+except Exception as e:
+    st.error(f"Terjadi kesalahan saat memuat SHAP: {e}")
+    # Debugging: Tampilkan nama langkah yang tersedia di pipeline untuk pengecekan
+    if hasattr(model, 'named_steps'):
+        st.info(f"Nama langkah (steps) yang tersedia di model: {list(model.named_steps.keys())}")
