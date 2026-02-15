@@ -1,6 +1,5 @@
 import streamlit.components.v1 as components
 import streamlit as st
-from streamlit_shap import st_shap
 import pandas as pd
 import pickle
 import shap
@@ -120,7 +119,7 @@ if predict_btn:
         # STEP B: Identify specific steps
         # From your metadata: Step 0 is 'preprocessing', Step 1 is 'model'
         preprocessor = pipeline.named_steps['preprocessing']
-        xgb_model = pipeline.named_steps['model']
+        xgb_model = pipeline.named_steps['modeling']
 
         # STEP C: Transform data for SHAP
         # SHAP needs the numeric/encoded data that goes INTO the XGBoost
@@ -157,4 +156,4 @@ if predict_btn:
 
     except Exception as e:
         st.error(f"SHAP Error: {e}")
-        st.info("Check if your pipeline step names are exactly 'preprocessing' and 'model'.")
+        st.info("Check if your pipeline step names are exactly 'preprocessing' and 'modeling'.")
