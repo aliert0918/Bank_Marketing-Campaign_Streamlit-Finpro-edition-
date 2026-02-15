@@ -4,10 +4,10 @@ import pickle
 import shap
 import matplotlib.pyplot as plt
 import numpy as np
-from imblearn.pipeline import Pipeline # Wajib ada jika pakai imblearn pipeline
+from imblearn.pipeline import Pipeline
 
 # ==========================================
-# 1. KONFIGURASI & LOAD MODEL
+# 1. LOAD MODEL
 # ==========================================
 st.set_page_config(page_title="Bank Marketing Prediction", layout="wide")
 
@@ -20,7 +20,6 @@ def load_model():
 
 model_wrapper = load_model()
 
-# Fungsi untuk membuat 4 fitur tambahan otomatis
 def add_engineered_features(df):
     df = df.copy()
     df["contacted_before"] = (df["pdays"] != 999).astype(int)
@@ -31,52 +30,46 @@ def add_engineered_features(df):
     return df
 
 # ==========================================
-# 2. UI INPUT USER
+# 2. UI INPUT
 # ==========================================
 st.title("🏦 Bank Marketing Prediction Tool")
-st.markdown("Gunakan form di bawah untuk memprediksi apakah nasabah akan berlangganan deposit.")
 
 with st.form("main_form"):
     col1, col2, col3 = st.columns(3)
-    
     with col1:
         age = st.number_input("Age", 17, 98, 30)
         job = st.selectbox("Job", ['housemaid', 'services', 'admin.', 'blue-collar', 'technician', 'retired', 'management', 'unemployed', 'self-employed', 'unknown', 'entrepreneur', 'student'])
-        marital = st.selectbox("Marital Status", ['married', 'single', 'divorced', 'unknown'])
-        education = st.selectbox("Education", ['basic.4y', 'high.school', 'basic.6y', 'basic.9y', 'professional.course', 'unknown', 'university.degree', 'illiterate'])
-        
+        marital = st.selectbox("Marital", ['married', 'single', 'divorced', 'unknown'])
     with col2:
-        default = st.selectbox("Has Credit in Default?", ['no', 'unknown', 'yes'])
-        housing = st.selectbox("Has Housing Loan?", ['no', 'yes', 'unknown'])
-        loan = st.selectbox("Has Personal Loan?", ['no', 'yes', 'unknown'])
-        contact = st.selectbox("Contact Type", ['telephone', 'cellular'])
+        education = st.selectbox("Education", ['basic.4y', 'high.school', 'basic.6y', 'basic.9y', 'professional.course', 'unknown', 'university.degree', 'illiterate'])
+        default = st.selectbox("Default?", ['no', 'unknown', 'yes'])
+        housing = st.selectbox("Housing?", ['no', 'yes', 'unknown'])
+    with col3:
+        loan = st.selectbox("Loan?", ['no', 'yes', 'unknown'])
+        contact = st.selectbox("Contact", ['telephone', 'cellular'])
         month = st.selectbox("Month", ['may', 'jun', 'jul', 'aug', 'oct', 'nov', 'dec', 'mar', 'apr', 'sep'])
 
-    with col3:
-        day_of_week = st.selectbox("Day of Week", ['mon', 'tue', 'wed', 'thu', 'fri'])
-        campaign = st.number_input("Contacts during Campaign", 1, 50, 1)
-        pdays = st.number_input("Days since last contact (999=Never)", 0, 999, 999)
-        previous = st.number_input("Previous Contacts", 0, 10, 0)
-        poutcome = st.selectbox("Previous Outcome", ['nonexistent', 'failure', 'success'])
-
-    st.subheader("Socio-Economic Indicators")
-    ec1, ec2, ec3 = st.columns(3)
-    with ec1:
-        emp_var_rate = st.number_input("Employment Var Rate", -4.0, 2.0, 1.1)
-    with ec2:
-        cons_price_idx = st.number_input("Cons Price Index", 90.0, 95.0, 93.9)
-        cons_conf_idx = st.number_input("Cons Conf Index", -50.0, -10.0, -36.4)
-    with ec3:
-        euribor3m = st.number_input("Euribor 3 Month", 0.0, 6.0, 4.8)
-        nr_employed = st.number_input("No. Employed", 4900.0, 5300.0, 5228.0)
+    col4, col5, col6 = st.columns(3)
+    with col4:
+        day_of_week = st.selectbox("Day", ['mon', 'tue', 'wed', 'thu', 'fri'])
+        campaign = st.number_input("Campaign", 1, 50, 1)
+        pdays = st.number_input("Pdays", 0, 999, 999)
+    with col5:
+        previous = st.number_input("Previous", 0, 10, 0)
+        poutcome = st.selectbox("Poutcome", ['nonexistent', 'failure', 'success'])
+        emp_var_rate = st.number_input("Emp.Var.Rate", -4.0, 2.0, 1.1)
+    with col6:
+        cons_price_idx = st.number_input("Cons.Price.Idx", 90.0, 95.0, 93.9)
+        cons_conf_idx = st.number_input("Cons.Conf.Idx", -50.0, -10.0, -36.4)
+        euribor3m = st.number_input("Euribor3m", 0.0, 6.0, 4.8)
+        nr_employed = st.number_input("Nr.Employed", 4900.0, 5300.0, 5228.0)
 
     predict_btn = st.form_submit_button("Predict & Explain")
 
 # ==========================================
-# 3. LOGIKA PREDIKSI & SHAP
+# 3. PREDICTION & SHAP
 # ==========================================
 if predict_btn:
-    # Buat DataFrame awal (19 kolom)
     raw_input = pd.DataFrame([{
         'age': age, 'job': job, 'marital': marital, 'education': education,
         'default': default, 'housing': housing, 'loan': loan, 'contact': contact,
@@ -86,57 +79,49 @@ if predict_btn:
         'cons.conf.idx': cons_conf_idx, 'euribor3m': euribor3m, 'nr.employed': nr_employed
     }])
 
-    # Tambahkan fitur engineering (Total jadi 23 kolom sesuai model)
     df_final = add_engineered_features(raw_input)
-
-    # Prediksi
     prediction = model_wrapper.predict(df_final)[0]
     
     st.divider()
     if prediction == 1:
-        st.success("### HASIL: Nasabah Diprediksi BERLANGGANAN (YES) ✅")
+        st.success("### Prediction: YES (Subscribe) ✅")
     else:
-        st.error("### HASIL: Nasabah Diprediksi TIDAK Berlangganan (NO) ❌")
+        st.error("### Prediction: NO (Will not subscribe) ❌")
 
-    # BAGIAN SHAP (Kunci Keberhasilan)
-    st.subheader("🔍 Penjelasan Faktor Prediksi (SHAP)")
+    st.subheader("🔍 SHAP Explanation")
     try:
-        with st.spinner('Membongkar model dan menghitung SHAP...'):
-            # Ambil pipeline dari dalam wrapper TunedThreshold
-            pipeline = model_wrapper.estimator_ 
-            
-            # Ambil step sesuai nama yang kamu debug: 'preprocessing' & 'modeling'
-            prep = pipeline.named_steps['preprocessing']
-            model_xgb = pipeline.named_steps['modeling']
-            
-            # Transform data input ke format angka
-            X_transformed = prep.transform(df_final)
-            
-            # Explainer khusus XGBoost
-            explainer = shap.TreeExplainer(model_xgb)
-            shap_values = explainer.shap_values(X_transformed)
-            
-            # Ambil nama fitur hasil transformasi (OneHot encoding dll)
-            try:
-                feature_names = prep.get_feature_names_out()
-            except:
-                feature_names = [f"Col_{i}" for i in range(X_transformed.shape[1])]
+        # Bongkar wrapper TunedThreshold ke Pipeline
+        pipeline = model_wrapper.estimator_ 
+        # Ambil step sesuai debug: 'preprocessing' dan 'modeling'
+        prep = pipeline.named_steps['preprocessing']
+        model_xgb = pipeline.named_steps['modeling']
+        
+        # Transform data
+        X_transformed = prep.transform(df_final)
+        
+        # SHAP calculation
+        explainer = shap.TreeExplainer(model_xgb)
+        shap_values = explainer.shap_values(X_transformed)
+        
+        # Nama fitur
+        try:
+            feature_names = prep.get_feature_names_out()
+        except:
+            feature_names = [f"Col_{i}" for i in range(X_transformed.shape[1])]
 
-            # Plotting Force Plot
-            st.set_option('deprecation.showPyplotGlobalUse', False)
-            
-            # Handle format output (expected value dan shap value untuk baris ke-0)
-            ev = explainer.expected_value
-            sv = shap_values[0]
+        st.set_option('deprecation.showPyplotGlobalUse', False)
+        
+        # Plotting
+        fig = shap.force_plot(
+            explainer.expected_value, 
+            shap_values[0], 
+            X_transformed[0], 
+            feature_names=feature_names,
+            matplotlib=True, 
+            show=False
+        )
+        st.pyplot(fig, bbox_inches='tight')
+        st.info("Info: Merah mendorong ke YES, Biru mendorong ke NO.")
 
-            fig = shap.force_plot(
-                ev, sv, X_transformed[0], 
-                feature_names=feature_names, 
-                matplotlib=True, show=False
-            )
-            st.pyplot(fig, bbox_inches='tight')
-            st.info("Penjelasan: Merah mendorong ke arah 'YES', Biru mendorong ke arah 'NO'.")
-            
     except Exception as e:
-        st.warning(f"SHAP gagal: {e}")
-            st.info("Saran: Cek apakah data input sudah lengkap dan sesuai format.")
+        st.error(f"SHAP Error: {e}")
