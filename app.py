@@ -154,46 +154,46 @@ if submitted:
 # ... (Kode pipeline loading Anda sebelumnya) ...
 
 # --- Bagian try-except SHAP yang baru ---
-try:
+    try:
     # 1. Identifikasi Preprocessor & Model (Gunakan index agar aman)
-    preprocessor = model.steps[0][1]
-    model_estimator = model.steps[-1][1]
+        preprocessor = model.steps[0][1]
+        model_estimator = model.steps[-1][1]
     
     # 2. Transformasi data input
-    X_processed = preprocessor.transform(input_df)
+        X_processed = preprocessor.transform(input_df)
     
     # 3. Hitung SHAP Values
-    explainer = shap.TreeExplainer(model_estimator)
-    shap_values = explainer.shap_values(X_processed)
+        explainer = shap.TreeExplainer(model_estimator)
+        shap_values = explainer.shap_values(X_processed)
     
     # Handling format output SHAP (jika list, ambil kelas positif/index 1)
-    if isinstance(shap_values, list):
-        shap_values_to_plot = shap_values[1]
-        expected_value = explainer.expected_value[1]
-    else:
-        shap_values_to_plot = shap_values
-        expected_value = explainer.expected_value
+        if isinstance(shap_values, list):
+            shap_values_to_plot = shap_values[1]
+            expected_value = explainer.expected_value[1]
+        else:
+            shap_values_to_plot = shap_values
+            expected_value = explainer.expected_value
 
     # 4. Ambil nama fitur (supaya grafik ada labelnya, bukan cuma Feature 0, 1...)
-    try:
-        feature_names = preprocessor.get_feature_names_out()
-    except AttributeError:
-        feature_names = [f"Feature {i}" for i in range(X_processed.shape[1])]
+        try:
+            feature_names = preprocessor.get_feature_names_out()
+        except AttributeError:
+            feature_names = [f"Feature {i}" for i in range(X_processed.shape[1])]
 
     # 5. Visualisasi (HAPUS st.set_option yang bikin error)
-    st.write("Grafik ini menunjukkan fitur mana yang mendorong prediksi ke arah 'YES' (merah) atau 'NO' (biru).")
+        st.write("Grafik ini menunjukkan fitur mana yang mendorong prediksi ke arah 'YES' (merah) atau 'NO' (biru).")
     
     # Gunakan matplotlib=False agar grafiknya interaktif (bisa di-hover mouse)
-    force_plot = shap.force_plot(
-        expected_value,
-        shap_values_to_plot[0], # Ambil data pertama
-        X_processed[0],         # Ambil data pertama
-        feature_names=feature_names,
-        matplotlib=False        # PENTING: Set False agar jadi JavaScript
-    )
+        force_plot = shap.force_plot(
+            expected_value,
+            shap_values_to_plot[0], # Ambil data pertama
+            X_processed[0],         # Ambil data pertama
+            feature_names=feature_names,
+            matplotlib=False        # PENTING: Set False agar jadi JavaScript
+        )
     
     # Tampilkan menggunakan fungsi helper
-    st_shap(force_plot)
+        st_shap(force_plot)
 
-except Exception as e:
-    st.error(f"Gagal memuat SHAP: {e}")
+    except Exception as e:
+        st.error(f"Gagal memuat SHAP: {e}")
