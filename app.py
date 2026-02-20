@@ -105,39 +105,30 @@ if predict_btn:
         # Transform data input
         X_transformed = prep.transform(df_final)
         
+        # Kalkulasi SHAP
+        explainer = shap.TreeExplainer(xgb_mod)
+        shap_values = explainer.shap_values(X_transformed)
+        
         # Dapatkan nama kolom fitur
         try:
             feat_names = prep.get_feature_names_out()
         except:
             feat_names = [f"Col_{i}" for i in range(X_transformed.shape[1])]
 
-        # --- UPDATE UTAMA DISINI ---
+        # Plotting menggunakan cara yang aman (matplotlib figure)
+        fig, ax = plt.subplots(figsize=(10, 3))
+        shap.force_plot(
+            explainer.expected_value, 
+            shap_values[0], 
+            X_transformed[0], 
+            feature_names=feat_names,
+            matplotlib=True, 
+            show=False
+        )
+        st.pyplot(plt.gcf(), bbox_inches='tight')
+        plt.clf() # Bersihkan plot setelah tampil
         
-        # Gunakan Explainer Object-Oriented (API baru) agar lebih fleksibel
-        explainer = shap.TreeExplainer(xgb_mod)
-        shap_values = explainer(X_transformed) # Menghasilkan objek Explanation
-        
-        # Masukkan nama fitur ke dalam objek SHAP agar muncul di grafik
-        shap_values.feature_names = feat_names
-
-        # Buat Figure Matplotlib
-        fig, ax = plt.subplots(figsize=(10, 6))
-        
-        # OPSI 1: WATERFALL PLOT (Sangat Direkomendasikan untuk Single Prediction)
-        # Ini akan menampilkan list fitur ke bawah dan kontribusinya (mirip beeswarm tapi versi individual)
-        shap.plots.waterfall(shap_values[0], max_display=15, show=False)
-        
-        # OPSI 2: Kalau kamu KEUKEUH ingin Beeswarm Plot (Summary Plot)
-        # Hapus tanda pagar di bawah ini jika ingin pakai summary_plot, 
-        # tapi ingat: hanya akan muncul 1 titik per baris.
-        # shap.summary_plot(shap_values, X_transformed, feature_names=feat_names, plot_type="dot", show=False)
-        
-        # Tampilkan di Streamlit
-        st.pyplot(fig, bbox_inches='tight')
-        plt.clf() # Bersihkan memori plot
-        
-        st.info("Merah: Mendorong skor ke arah POSITIF (YES) | Biru: Mendorong skor ke arah NEGATIF (NO)")
-        st.caption("Grafik di atas (Waterfall) menunjukkan fitur mana yang paling berkontribusi terhadap keputusan model untuk nasabah ini secara spesifik.")
+        st.info("Merah: Mendorong ke arah YES | Biru: Mendorong ke arah NO")
 
     except Exception as e:
         st.error(f"Gagal memuat SHAP: {e}")
