@@ -2,6 +2,9 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import pickle
+import lime
+import lime.lime_tabular
+import streamlit.components.v1 as components
 
 # ==========================================
 # 1. KONFIGURASI HALAMAN & HEADER
@@ -11,6 +14,7 @@ st.set_page_config(page_title="Telemarketing Term Deposit Prediction", layout="w
 st.title("Bank Marketing Term Deposit Prediction")
 st.markdown("### Machine Learning-Based Decision Support System for Telemarketing Effectiveness")
 
+# Dashboard Team Info
 st.sidebar.markdown("### 👥 Team Information")
 st.sidebar.info(
     "**JCDSBDGPM10+AM08 DELTA GROUP**\n\n"
@@ -31,30 +35,30 @@ def load_model():
 
 try:
     model = load_model()
-    # model.estimator_ digunakan jika model utama adalah wrapper seperti TunedThresholdClassifierCV
+    # Mengambil internal pipeline untuk LIME dan preprocessing
     pipeline_internal = model.estimator_ 
+    prep = pipeline_internal.named_steps['preprocessing']
+    xgb_mod = pipeline_internal.named_steps['modeling']
 except Exception as e:
     st.error(f"Error loading model: {e}")
     st.stop()
 
 # ==========================================
-# 3. INPUT FITUR (Dikelompokkan)
+# 3. INPUT FITUR (Grouped Tabs)
 # ==========================================
 st.markdown("---")
 st.markdown("### 📋 Customer Information Input")
 
-tab1, tab2, tab3, tab4 = st.tabs(["Client Information", "Last Contact Information", "Socio-Economic Context", "Engineered Features"])
+tab1, tab2, tab3, tab4 = st.tabs(["Client Profile", "Contact Detail", "Socio-Economic", "Feature Engineering"])
 
 with tab1:
     col1, col2 = st.columns(2)
     with col1:
-        # Range age 17-98 
         age = st.number_input("Age", min_value=17, max_value=98, value=40)
-        # Unique categories from [cite: 1]
         job = st.selectbox("Job", ['housemaid', 'services', 'admin.', 'blue-collar', 'technician', 'retired', 'management', 'unemployed', 'self-employed', 'unknown', 'entrepreneur', 'student'])
         marital = st.selectbox("Marital Status", ['married', 'single', 'divorced', 'unknown'])
-        education = st.selectbox("Education", ['basic.4y', 'high.school', 'basic.6y', 'basic.9y', 'professional.course', 'unknown', 'university.degree', 'illiterate'])
     with col2:
+        education = st.selectbox("Education", ['basic.4y', 'high.school', 'basic.6y', 'basic.9y', 'professional.course', 'unknown', 'university.degree', 'illiterate'])
         default = st.selectbox("Has Credit in Default?", ['no', 'unknown', 'yes'])
         housing = st.selectbox("Has Housing Loan?", ['no', 'yes', 'unknown'])
         loan = st.selectbox("Has Personal Loan?", ['no', 'yes', 'unknown'])
@@ -62,48 +66,43 @@ with tab1:
 with tab2:
     col3, col4 = st.columns(2)
     with col3:
-        contact = st.selectbox("Contact Type", ['telephone', 'cellular'])
+        contact = st.selectbox("Contact Communication Type", ['telephone', 'cellular'])
         month = st.selectbox("Month", ['may', 'jun', 'jul', 'aug', 'oct', 'nov', 'dec', 'mar', 'apr', 'sep'])
         day_of_week = st.selectbox("Day of Week", ['mon', 'tue', 'wed', 'thu', 'fri'])
-        poutcome = st.selectbox("Previous Campaign Outcome", ['nonexistent', 'failure', 'success'])
     with col4:
         campaign = st.number_input("Contacts during Campaign", min_value=1, max_value=56, value=2)
-        
-        # LOGIKA PDAYS: 999 menunjukkan belum pernah dikontak 
-        not_contacted_before = st.checkbox("Belum pernah dikontak sebelumnya?", value=True)
-        if not_contacted_before:
-            pdays = 999
-            st.caption("Pdays otomatis diatur ke 999")
-        else:
-            pdays = st.number_input("Days since last contact", min_value=0, max_value=27, value=7)
-            
+        # Logika Pdays: checkbox untuk 999
+        not_contacted_before = st.checkbox("Belum pernah dikontak sebelumnya (Pdays 999)", value=True)
+        pdays = 999 if not_contacted_before else st.number_input("Days since last contact", min_value=0, max_value=27, value=7)
         previous = st.number_input("Previous Contacts", min_value=0, max_value=7, value=0)
+        poutcome = st.selectbox("Previous Campaign Outcome", ['nonexistent', 'failure', 'success'])
 
 with tab3:
+    # socio-economic ditampilkan langsung (tidak disembunyikan)
+    st.subheader("Macroeconomic Indicators")
     col5, col6 = st.columns(2)
     with col5:
-        # Socio-economic ranges from 
-        emp_var_rate = st.slider("Employment Var Rate", -3.4, 1.4, 0.1)
-        cons_price_idx = st.slider("Consumer Price Index", 92.201, 94.767, 93.575)
-        cons_conf_idx = st.slider("Consumer Confidence Index", -50.8, -26.9, -40.5)
+        emp_var_rate = st.slider("Employment Variation Rate", -3.4, 1.4, 0.08)
+        cons_price_idx = st.slider("Consumer Price Index", 92.201, 94.767, 93.575, format="%.3f")
     with col6:
-        euribor3m = st.slider("Euribor 3 Month Rate", 0.634, 5.045, 3.621)
+        cons_conf_idx = st.slider("Consumer Confidence Index", -50.8, -26.9, -40.5)
+        euribor3m = st.slider("Euribor 3 Month Rate", 0.634, 5.045, 3.621, format="%.3f")
         nr_employed = st.slider("Number of Employees", 4963.6, 5228.1, 5167.0)
 
 with tab4:
     col7, col8 = st.columns(2)
     with col7:
-        contacted_before = st.selectbox("Contacted Before (Binary)", [0, 1], index=0 if pdays == 999 else 1)
-        previous_success = st.selectbox("Previous Success (Binary)", [0, 1], index=1 if poutcome == 'success' else 0)
+        contacted_before = st.selectbox("Contacted Before (1=Yes, 0=No)", [0, 1], index=0 if pdays == 999 else 1)
+        previous_success = st.selectbox("Previous Success (1=Yes, 0=No)", [0, 1], index=1 if poutcome == 'success' else 0)
     with col8:
-        is_success_month = st.selectbox("Is Success Month (Binary)", [0, 1], index=0)
-        euribor_low = st.selectbox("Euribor Low (Binary)", [0, 1], index=0)
+        is_success_month = st.selectbox("Is Success Month (1=Yes, 0=No)", [0, 1], index=0)
+        euribor_low = st.selectbox("Euribor Low (1=Yes, 0=No)", [0, 1], index=0)
 
 # ==========================================
-# 4. PREDIKSI & HASIL
+# 4. PREDICTION & LIME
 # ==========================================
 if st.button("Predict Term Deposit Conversion", type="primary"):
-    # Buat dictionary sesuai urutan di column_names.txt 
+    # Urutan kolom sesuai column_names.txt
     input_dict = {
         'age': age, 'job': job, 'marital': marital, 'education': education, 
         'default': default, 'housing': housing, 'loan': loan, 'contact': contact, 
@@ -117,26 +116,55 @@ if st.button("Predict Term Deposit Conversion", type="primary"):
     
     df_input = pd.DataFrame([input_dict])
     
-    # Tampilkan Tabel Info Customer
-    st.markdown("### 🧑‍💼 Customer Profile Summary")
+    st.markdown("### 🧑‍💼 Customer Profile Table")
     st.dataframe(df_input)
     
-    # Prediksi
+    # Predict
     prediction = model.predict(df_input)[0]
-    
-    # Ambil Probabilitas
     try:
         prob = model.predict_proba(df_input)[0][1]
     except AttributeError:
         prob = pipeline_internal.predict_proba(df_input)[0][1]
 
-    # Display Hasil
+    # Result Display
     st.markdown("### 🎯 Prediction Result")
-    res_col1, res_col2 = st.columns(2)
-    with res_col1:
+    res1, res2 = st.columns(2)
+    with res1:
         if prediction == 1:
-            st.success("Result: **YES** (Likely to subscribe)")
+            st.success("Recommendation: **SUBSCRIBE** (YES)")
         else:
-            st.error("Result: **NO** (Unlikely to subscribe)")
-    with res_col2:
+            st.error("Recommendation: **DO NOT SUBSCRIBE** (NO)")
+    with res2:
         st.metric("Conversion Probability", f"{prob * 100:.2f}%")
+
+    # LIME Explanation
+    st.markdown("---")
+    st.markdown("### 🔍 Customer Analysis (LIME)")
+    with st.spinner("Generating LIME analysis..."):
+        try:
+            # Transform input ke numerik
+            transformed_input = prep.transform(df_input)
+            
+            # Buat background data simpel dari input
+            dummy_data = pd.concat([df_input]*50, ignore_index=True)
+            transformed_background = prep.transform(dummy_data)
+            
+            feature_names = prep.get_feature_names_out()
+
+            explainer = lime.lime_tabular.LimeTabularExplainer(
+                training_data=transformed_background,
+                feature_names=feature_names,
+                class_names=['No', 'Yes'],
+                mode='classification'
+            )
+            
+            # Predict function mengarah ke XGB modeling step
+            exp = explainer.explain_instance(
+                data_row=transformed_input[0],
+                predict_fn=xgb_mod.predict_proba,
+                num_features=10
+            )
+            
+            components.html(exp.as_html(), height=450, scrolling=True)
+        except Exception as e:
+            st.warning(f"LIME Analysis unavailable: {e}")
