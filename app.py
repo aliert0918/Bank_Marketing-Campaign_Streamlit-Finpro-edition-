@@ -14,7 +14,7 @@ st.set_page_config(page_title="Telemarketing Term Deposit Prediction", layout="w
 st.title("Bank Marketing Term Deposit Prediction")
 st.markdown("### Machine Learning-Based Decision Support System for Telemarketing Effectiveness")
 
-# Dashboard Team Info
+# Dashboard Team Info di Sidebar
 st.sidebar.markdown("### 👥 Team Information")
 st.sidebar.info(
     "**JCDSBDGPM10+AM08 DELTA GROUP**\n\n"
@@ -24,10 +24,11 @@ st.sidebar.info(
 )
 
 # ==========================================
-# 2. LOAD MODEL
+# 2. LOAD MODEL & PIPELINE STEPS
 # ==========================================
 @st.cache_resource
 def load_model():
+    # Pastikan nama file pkl sesuai dengan yang ada di folder Anda
     model_path = "threshold_tuned_BankMarketingFinpro_FOR_DEPLOYMENT_20260215_11_49.pkl"
     with open(model_path, 'rb') as file:
         model = pickle.load(file)
@@ -35,12 +36,13 @@ def load_model():
 
 try:
     model = load_model()
-    # Mengambil internal pipeline untuk LIME dan preprocessing
+    # Mengekstrak pipeline internal dari wrapper TunedThresholdClassifierCV
     pipeline_internal = model.estimator_ 
+    # Mengambil step preprocessing dan modeling (XGBoost)
     prep = pipeline_internal.named_steps['preprocessing']
     xgb_mod = pipeline_internal.named_steps['modeling']
 except Exception as e:
-    st.error(f"Error loading model: {e}")
+    st.error(f"Terjadi kesalahan saat memuat model: {e}")
     st.stop()
 
 # ==========================================
@@ -71,14 +73,13 @@ with tab2:
         day_of_week = st.selectbox("Day of Week", ['mon', 'tue', 'wed', 'thu', 'fri'])
     with col4:
         campaign = st.number_input("Contacts during Campaign", min_value=1, max_value=56, value=2)
-        # Logika Pdays: checkbox untuk 999
+        # Logika Pdays: checkbox untuk otomatis 999
         not_contacted_before = st.checkbox("Belum pernah dikontak sebelumnya (Pdays 999)", value=True)
         pdays = 999 if not_contacted_before else st.number_input("Days since last contact", min_value=0, max_value=27, value=7)
         previous = st.number_input("Previous Contacts", min_value=0, max_value=7, value=0)
         poutcome = st.selectbox("Previous Campaign Outcome", ['nonexistent', 'failure', 'success'])
 
 with tab3:
-    # socio-economic ditampilkan langsung (tidak disembunyikan)
     st.subheader("Macroeconomic Indicators")
     col5, col6 = st.columns(2)
     with col5:
@@ -99,10 +100,10 @@ with tab4:
         euribor_low = st.selectbox("Euribor Low (1=Yes, 0=No)", [0, 1], index=0)
 
 # ==========================================
-# 4. PREDICTION & LIME
+# 4. PREDICTION & FIXED LIME VISUALIZATION
 # ==========================================
 if st.button("Predict Term Deposit Conversion", type="primary"):
-    # Urutan kolom sesuai column_names.txt
+    # Menyiapkan data input sesuai urutan kolom asli model
     input_dict = {
         'age': age, 'job': job, 'marital': marital, 'education': education, 
         'default': default, 'housing': housing, 'loan': loan, 'contact': contact, 
@@ -116,17 +117,17 @@ if st.button("Predict Term Deposit Conversion", type="primary"):
     
     df_input = pd.DataFrame([input_dict])
     
-    st.markdown("### 🧑‍💼 Customer Profile Table")
+    st.markdown("### 🧑‍💼 Customer Profile Summary")
     st.dataframe(df_input)
     
-    # Predict
+    # Proses Prediksi
     prediction = model.predict(df_input)[0]
     try:
         prob = model.predict_proba(df_input)[0][1]
     except AttributeError:
         prob = pipeline_internal.predict_proba(df_input)[0][1]
 
-    # Result Display
+    # Menampilkan Hasil Prediksi
     st.markdown("### 🎯 Prediction Result")
     res1, res2 = st.columns(2)
     with res1:
@@ -137,34 +138,54 @@ if st.button("Predict Term Deposit Conversion", type="primary"):
     with res2:
         st.metric("Conversion Probability", f"{prob * 100:.2f}%")
 
-    # LIME Explanation
+    # ==========================================
+    # INTEGRASI FIX LIME (VISUAL & CLEAN NAMES)
+    # ==========================================
     st.markdown("---")
     st.markdown("### 🔍 Customer Analysis (LIME)")
+    st.info("Grafik di bawah menunjukkan fitur mana yang paling mempengaruhi keputusan model (Biru: Mendukung YES, Merah: Mendukung NO).")
+    
     with st.spinner("Generating LIME analysis..."):
         try:
-            # Transform input ke numerik
+            # 1. Transformasi data input ke numerik melalui pipeline preprocessing
             transformed_input = prep.transform(df_input)
             
-            # Buat background data simpel dari input
-            dummy_data = pd.concat([df_input]*50, ignore_index=True)
+            # 2. Membuat background data untuk referensi LIME (menggunakan replikasi input)
+            dummy_data = pd.concat([df_input]*100, ignore_index=True)
             transformed_background = prep.transform(dummy_data)
             
-            feature_names = prep.get_feature_names_out()
+            # 3. PROSES MEMBERSIHKAN NAMA FITUR (Fix: No more 'onehot__' prefixes)
+            try:
+                raw_feature_names = prep.get_feature_names_out()
+                clean_feature_names = [
+                    name.split('__')[-1] # Mengambil nama asli setelah prefix '__'
+                    .replace('binary_enc_', '') # Menghapus prefix binary encoder jika ada
+                    for name in raw_feature_names
+                ]
+            except AttributeError:
+                # Fallback jika get_feature_names_out tidak tersedia
+                clean_feature_names = [f"Feature_{i}" for i in range(transformed_input.shape[1])]
 
+            # 4. Inisiasi LIME Explainer dengan nama fitur yang sudah bersih
             explainer = lime.lime_tabular.LimeTabularExplainer(
                 training_data=transformed_background,
-                feature_names=feature_names,
-                class_names=['No', 'Yes'],
-                mode='classification'
+                feature_names=clean_feature_names,
+                class_names=['No (Gagal)', 'Yes (Sukses)'],
+                mode='classification',
+                random_state=42
             )
             
-            # Predict function mengarah ke XGB modeling step
+            # 5. Generate penjelasan LIME menggunakan modeling step (XGBoost)
             exp = explainer.explain_instance(
                 data_row=transformed_input[0],
                 predict_fn=xgb_mod.predict_proba,
                 num_features=10
             )
             
-            components.html(exp.as_html(), height=450, scrolling=True)
+            # 6. FIX VISUALISASI: Tampilkan sebagai HTML komponen (Grafik Bar)
+            html_content = exp.as_html()
+            components.html(html_content, height=500, scrolling=True)
+            
         except Exception as e:
             st.warning(f"LIME Analysis unavailable: {e}")
+            st.write("Saran: Pastikan library 'lime' sudah terinstal di environment Anda.")
